@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'services/api_service.dart';
 
 void main() {
   runApp(const IoTMonitoringApp());
@@ -14,40 +17,109 @@ class IoTMonitoringApp extends StatelessWidget {
       title: 'IoT Monitoring',
       theme: ThemeData(
         useMaterial3: true,
-        fontFamily: 'Roboto',
         scaffoldBackgroundColor: const Color(0xFFF4F7FB),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2563EB),
-        ),
       ),
       home: const DashboardPage(),
     );
   }
 }
 
-class DashboardPage extends StatelessWidget {
+class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
   @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  Timer? timer;
+
+  double? temperature;
+  double? humidity;
+
+  String deviceStatus = 'Checking...';
+  String lastRecorded = '-';
+  String errorMessage = '';
+
+  List<dynamic> telemetryHistory = [];
+
+  @override
+  void initState() {
+    super.initState();
+
+    fetchData();
+
+    timer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => fetchData(),
+    );
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> fetchData() async {
+    try {
+      final results = await Future.wait([
+        ApiService.getTelemetry(),
+        ApiService.getDeviceStatus(),
+      ]);
+
+      final telemetry = results[0] as List<dynamic>;
+      final status = results[1] as Map<String, dynamic>;
+
+      if (!mounted) return;
+
+      setState(() {
+        deviceStatus = status['status'] ?? 'OFFLINE';
+        errorMessage = '';
+
+        // Urutkan data dari terlama ke terbaru
+        telemetryHistory = List<dynamic>.from(telemetry)
+          ..sort((a, b) => a['id'].compareTo(b['id']));
+
+        if (telemetryHistory.isNotEmpty) {
+          final latest = telemetryHistory.last;
+
+          temperature = double.tryParse(
+            latest['temperature'].toString(),
+          );
+
+          humidity = double.tryParse(
+            latest['humidity'].toString(),
+          );
+
+          lastRecorded = latest['recorded_at']?.toString() ?? '-';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        deviceStatus = 'OFFLINE';
+        errorMessage = 'Gagal menghubungkan ke server';
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isOnline = deviceStatus == 'ONLINE';
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 0,
         title: const Text(
           'IoT Monitoring',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1E293B),
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
-            onPressed: () {},
-            icon: const Icon(
-              Icons.notifications_none,
-              color: Color(0xFF1E293B),
-            ),
+            onPressed: fetchData,
+            icon: const Icon(Icons.refresh),
           ),
         ],
       ),
@@ -57,13 +129,11 @@ class DashboardPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-
             const Text(
               'Dashboard',
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF1E293B),
               ),
             ),
 
@@ -71,10 +141,7 @@ class DashboardPage extends StatelessWidget {
 
             const Text(
               'Monitoring suhu dan kelembapan secara real-time',
-              style: TextStyle(
-                fontSize: 13,
-                color: Color(0xFF64748B),
-              ),
+              style: TextStyle(color: Color(0xFF64748B)),
             ),
 
             const SizedBox(height: 24),
@@ -87,25 +154,23 @@ class DashboardPage extends StatelessWidget {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Row(
+              child: Row(
                 children: [
                   Icon(
                     Icons.circle,
-                    color: Color(0xFF16A34A),
+                    color: isOnline ? Colors.green : Colors.red,
                     size: 12,
                   ),
-                  SizedBox(width: 10),
-                  Text(
+                  const SizedBox(width: 10),
+                  const Text(
                     'ESP32 Status',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontWeight: FontWeight.w600),
                   ),
-                  Spacer(),
+                  const Spacer(),
                   Text(
-                    'ONLINE',
+                    deviceStatus,
                     style: TextStyle(
-                      color: Color(0xFF16A34A),
+                      color: isOnline ? Colors.green : Colors.red,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -119,21 +184,19 @@ class DashboardPage extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: _sensorCard(
+                  child: sensorCard(
                     title: 'Temperature',
-                    value: '--',
+                    value: temperature?.toStringAsFixed(1) ?? '--',
                     unit: '°C',
                     icon: Icons.thermostat,
                     color: const Color(0xFFEF4444),
                   ),
                 ),
-
                 const SizedBox(width: 14),
-
                 Expanded(
-                  child: _sensorCard(
+                  child: sensorCard(
                     title: 'Humidity',
-                    value: '--',
+                    value: humidity?.toStringAsFixed(1) ?? '--',
                     unit: '%',
                     icon: Icons.water_drop,
                     color: const Color(0xFF3B82F6),
@@ -152,27 +215,120 @@ class DashboardPage extends StatelessWidget {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Column(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
+                  const Text(
                     'Monitoring History',
                     style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  SizedBox(height: 20),
-                  SizedBox(
-                    height: 180,
-                    child: Center(
-                      child: Text(
-                        'Chart akan ditampilkan di sini',
-                        style: TextStyle(
-                          color: Color(0xFF94A3B8),
-                        ),
+
+                  const SizedBox(height: 12),
+
+                  // Chart Legend
+                  Row(
+                    children: [
+                      _chartLegend(
+                        color: Colors.red,
+                        label: 'Temperature',
                       ),
-                    ),
+                      const SizedBox(width: 20),
+                      _chartLegend(
+                        color: Colors.blue,
+                        label: 'Humidity',
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    height: 220,
+                    child: telemetryHistory.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Belum ada data grafik',
+                              style: TextStyle(
+                                color: Color(0xFF94A3B8),
+                              ),
+                            ),
+                          )
+                        : LineChart(
+                            LineChartData(
+                              minY: 0,
+                              maxY: 100,
+                              gridData: const FlGridData(
+                                show: true,
+                              ),
+                              borderData: FlBorderData(
+                                show: false,
+                              ),
+                              titlesData: const FlTitlesData(
+                                topTitles: AxisTitles(
+                                  sideTitles: SideTitles(
+                                    showTitles: false,
+                                  ),
+                                ),
+                                rightTitles: AxisTitles(
+                                  sideTitles: SideTitles(
+                                    showTitles: false,
+                                  ),
+                                ),
+                              ),
+                              lineBarsData: [
+                                // Temperature
+                                LineChartBarData(
+                                  spots: telemetryHistory
+                                      .asMap()
+                                      .entries
+                                      .map(
+                                        (entry) => FlSpot(
+                                          entry.key.toDouble(),
+                                          double.tryParse(
+                                                entry.value['temperature']
+                                                    .toString(),
+                                              ) ??
+                                              0,
+                                        ),
+                                      )
+                                      .toList(),
+                                  isCurved: true,
+                                  color: Colors.red,
+                                  barWidth: 2.5,
+                                  dotData: const FlDotData(
+                                    show: false,
+                                  ),
+                                ),
+
+                                // Humidity
+                                LineChartBarData(
+                                  spots: telemetryHistory
+                                      .asMap()
+                                      .entries
+                                      .map(
+                                        (entry) => FlSpot(
+                                          entry.key.toDouble(),
+                                          double.tryParse(
+                                                entry.value['humidity']
+                                                    .toString(),
+                                              ) ??
+                                              0,
+                                        ),
+                                      )
+                                      .toList(),
+                                  isCurved: true,
+                                  color: Colors.blue,
+                                  barWidth: 2.5,
+                                  dotData: const FlDotData(
+                                    show: false,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                   ),
                 ],
               ),
@@ -197,11 +353,31 @@ class DashboardPage extends StatelessWidget {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Text(
-                'Belum ada data telemetry.',
-                style: TextStyle(
-                  color: Color(0xFF64748B),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Temperature: ${temperature?.toStringAsFixed(1) ?? '--'} °C',
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Humidity: ${humidity?.toStringAsFixed(1) ?? '--'} %',
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Recorded At: $lastRecorded',
+                    style: const TextStyle(
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                  if (errorMessage.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errorMessage,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ],
+                ],
               ),
             ),
           ],
@@ -230,7 +406,33 @@ class DashboardPage extends StatelessWidget {
     );
   }
 
-  Widget _sensorCard({
+  Widget _chartLegend({
+    required Color color,
+    required String label,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            color: Color(0xFF64748B),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget sensorCard({
     required String title,
     required String value,
     required String unit,
@@ -256,22 +458,12 @@ class DashboardPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          RichText(
-            text: TextSpan(
-              style: const TextStyle(
-                color: Color(0xFF1E293B),
-                fontWeight: FontWeight.bold,
-              ),
-              children: [
-                TextSpan(
-                  text: value,
-                  style: const TextStyle(fontSize: 28),
-                ),
-                TextSpan(
-                  text: ' $unit',
-                  style: const TextStyle(fontSize: 15),
-                ),
-              ],
+          Text(
+            '$value $unit',
+            style: const TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1E293B),
             ),
           ),
         ],
